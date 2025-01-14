@@ -16,8 +16,9 @@ import pandas as pd
 import seaborn as sn
 import torch
 from PIL import Image, ImageDraw, ImageFont
+from PIL import __version__ as pil_version
 
-from utils.general import user_config_dir, is_ascii, is_chinese, xywh2xyxy, xyxy2xywh
+from utils.general import check_version, user_config_dir, is_ascii, is_chinese, xywh2xyxy, xyxy2xywh
 from utils.metrics import fitness
 
 # Settings
@@ -68,15 +69,26 @@ class Annotator:
     # YOLOv5 Annotator for train/val mosaics and jpgs and detect/hub inference annotations
     def __init__(self, im, line_width=None, font_size=None, font='Arial.ttf', pil=False, example='abc'):
         assert im.data.contiguous, 'Image not contiguous. Apply np.ascontiguousarray(im) to Annotator() input images.'
-        self.pil = pil or not is_ascii(example) or is_chinese(example)
+        non_ascii = not is_ascii(example)  # non-latin labels, i.e. asian, arabic, cyrillic
+        self.pil = pil or non_ascii or is_chinese(example)
+        self.lw = line_width or max(round(sum(im.shape) / 2 * 0.003), 2)  # line width
         if self.pil:  # use PIL
             self.im = im if isinstance(im, Image.Image) else Image.fromarray(im)
             self.draw = ImageDraw.Draw(self.im)
-            self.font = check_font(font='Arial.Unicode.ttf' if is_chinese(example) else font,
-                                   size=font_size or max(round(sum(self.im.size) / 2 * 0.035), 12))
+            try:
+                font = check_font("Arial.Unicode.ttf" if non_ascii else font)
+                size = font_size or max(round(sum(self.im.size) / 2 * 0.035), 12)
+                self.font = ImageFont.truetype(str(font), size)
+            except Exception:
+                self.font = ImageFont.load_default()
+            # Deprecation fix for w, h = getsize(string) -> _, _, w, h = getbox(string)
+            # if check_version(pil_version, "9.2.0"):
+            self.font.getsize = lambda x: self.font.getbbox(x)[2:4]  # text width, height
         else:  # use cv2
-            self.im = im
-        self.lw = line_width or max(round(sum(im.shape) / 2 * 0.003), 2)  # line width
+            assert im.data.contiguous, "Image not contiguous. Apply np.ascontiguousarray(im) to Annotator input images."
+            self.im = im if im.flags.writeable else im.copy()
+            self.tf = max(self.lw - 1, 1)  # font thickness
+            self.sf = self.lw / 3  # font scale
 
     def box_label(self, box, label='', color=(128, 128, 128), txt_color=(255, 255, 255)):
         # Add one xyxy box to image with label
@@ -107,10 +119,35 @@ class Annotator:
         # Add rectangle to image (PIL-only)
         self.draw.rectangle(xy, fill, outline, width)
 
-    def text(self, xy, text, txt_color=(255, 255, 255)):
-        # Add text to image (PIL-only)
-        w, h = self.font.getsize(text)  # text width, height
-        self.draw.text((xy[0], xy[1] - h + 1), text, fill=txt_color, font=self.font)
+    def text(self, xy, text, txt_color=(255, 255, 255), anchor="top", box_style=False):
+        """Adds text to an image using PIL or cv2."""
+        if anchor == "bottom":  # start y from font bottom
+            w, h = self.font.getsize(text)  # text width, height
+            xy[1] += 1 - h
+        if self.pil:
+            if box_style:
+                w, h = self.font.getsize(text)
+                self.draw.rectangle((xy[0], xy[1], xy[0] + w + 1, xy[1] + h + 1), fill=txt_color)
+                # Using `txt_color` for background and draw fg with white color
+                txt_color = (255, 255, 255)
+            if "\n" in text:
+                lines = text.split("\n")
+                _, h = self.font.getsize(text)
+                for line in lines:
+                    self.draw.text(xy, line, fill=txt_color, font=self.font)
+                    xy[1] += h
+            else:
+                self.draw.text(xy, text, fill=txt_color, font=self.font)
+        else:
+            if box_style:
+                w, h = cv2.getTextSize(text, 0, fontScale=self.sf, thickness=self.tf)[0]  # text width, height
+                h += 3  # add pixels to pad text
+                outside = xy[1] >= h  # label fits outside box
+                p2 = xy[0] + w, xy[1] - h if outside else xy[1] + h
+                cv2.rectangle(self.im, xy, p2, txt_color, -1, cv2.LINE_AA)  # filled
+                # Using `txt_color` for background and draw fg with white color
+                txt_color = (255, 255, 255)
+            cv2.putText(self.im, text, xy, 0, self.sf, txt_color, thickness=self.tf, lineType=cv2.LINE_AA)
 
     def result(self):
         # Return annotated image as array

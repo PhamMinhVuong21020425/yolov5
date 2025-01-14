@@ -36,6 +36,7 @@ results*.csv
 coco/
 coco128/
 VOC/
+wb_localization_dataset/
 
 # MATLAB GitIgnore -----------------------------------------------------------------------------------------------------
 *.m~

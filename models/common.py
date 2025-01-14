@@ -15,7 +15,6 @@ import requests
 import torch
 import torch.nn as nn
 from PIL import Image
-from torch.cuda import amp
 
 from utils.datasets import exif_transpose, letterbox
 from utils.general import colorstr, increment_path, make_divisible, non_max_suppression, save_one_box, \
@@ -280,6 +279,7 @@ class AutoShape(nn.Module):
     classes = None  # (optional list) filter by class
     multi_label = False  # NMS multiple labels per box
     max_det = 1000  # maximum number of detections per image
+    amp = False  # Automatic Mixed Precision (AMP) inference
 
     def __init__(self, model):
         super().__init__()
@@ -312,8 +312,9 @@ class AutoShape(nn.Module):
 
         t = [time_sync()]
         p = next(self.model.parameters())  # for device and type
+        autocast = self.amp and (p.device.type != "cpu")  # Automatic Mixed Precision (AMP) inference
         if isinstance(imgs, torch.Tensor):  # torch
-            with amp.autocast(enabled=p.device.type != 'cpu'):
+            with torch.autocast(device_type=p.device.type, enabled=autocast):
                 return self.model(imgs.to(p.device).type_as(p), augment, profile)  # inference
 
         # Pre-process
@@ -342,7 +343,7 @@ class AutoShape(nn.Module):
         x = torch.from_numpy(x).to(p.device).type_as(p) / 255.  # uint8 to fp16/32
         t.append(time_sync())
 
-        with amp.autocast(enabled=p.device.type != 'cpu'):
+        with torch.autocast(device_type=p.device.type, enabled=autocast):
             # Inference
             y = self.model(x, augment, profile)[0]  # forward
             t.append(time_sync())

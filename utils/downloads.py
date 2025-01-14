@@ -58,7 +58,7 @@ def attempt_download(file, repo='ultralytics/yolov5'):  # from utils.downloads i
         try:
             response = requests.get(f'https://api.github.com/repos/{repo}/releases/latest').json()  # github api
             assets = [x['name'] for x in response['assets']]  # release assets, i.e. ['yolov5s.pt', 'yolov5m.pt', ...]
-            tag = response['tag_name']  # i.e. 'v1.0'
+            tag = 'v6.0'  # current version, not download latest release
         except:  # fallback plan
             assets = ['yolov5s.pt', 'yolov5m.pt', 'yolov5l.pt', 'yolov5x.pt',
                       'yolov5s6.pt', 'yolov5m6.pt', 'yolov5l6.pt', 'yolov5x6.pt']
